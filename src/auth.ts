@@ -1,4 +1,5 @@
 import NextAuth from "next-auth";
+import type { Provider } from "next-auth/providers";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import Credentials from "next-auth/providers/credentials";
 import Cognito from "next-auth/providers/cognito";
@@ -11,6 +12,66 @@ const loginSchema = z.object({
   password: z.string().min(8),
 });
 
+// Build providers array dynamically based on available config
+const providers: Provider[] = [];
+
+// AWS Cognito (only if configured)
+if (process.env.COGNITO_CLIENT_ID && process.env.COGNITO_CLIENT_SECRET && process.env.COGNITO_ISSUER) {
+  providers.push(
+    Cognito({
+      clientId: process.env.COGNITO_CLIENT_ID,
+      clientSecret: process.env.COGNITO_CLIENT_SECRET,
+      issuer: process.env.COGNITO_ISSUER,
+    })
+  );
+}
+
+// Google OAuth (only if configured)
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  providers.push(
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    })
+  );
+}
+
+// Email/Password (always available)
+providers.push(
+  Credentials({
+    name: "credentials",
+    credentials: {
+      email: { label: "Email", type: "email" },
+      password: { label: "Password", type: "password" },
+    },
+    async authorize(credentials) {
+      const parsed = loginSchema.safeParse(credentials);
+      if (!parsed.success) return null;
+
+      const { email, password } = parsed.data;
+
+      const user = await prisma.user.findUnique({
+        where: { email },
+        include: { organization: true },
+      });
+
+      if (!user || !user.passwordHash) return null;
+
+      // Dynamic import to avoid Edge Runtime issues
+      const { verifyPassword } = await import("@/lib/password");
+      const isValid = await verifyPassword(password, user.passwordHash);
+      if (!isValid) return null;
+
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        image: user.image,
+      };
+    },
+  })
+);
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
   session: {
@@ -21,52 +82,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     error: "/auth/error",
     newUser: "/onboarding",
   },
-  providers: [
-    // AWS Cognito (Recommended for AgentCore)
-    Cognito({
-      clientId: process.env.COGNITO_CLIENT_ID!,
-      clientSecret: process.env.COGNITO_CLIENT_SECRET!,
-      issuer: process.env.COGNITO_ISSUER!,
-    }),
-    // Google OAuth as backup
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-    // Email/Password
-    Credentials({
-      name: "credentials",
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        const parsed = loginSchema.safeParse(credentials);
-        if (!parsed.success) return null;
-
-        const { email, password } = parsed.data;
-
-        const user = await prisma.user.findUnique({
-          where: { email },
-          include: { organization: true },
-        });
-
-        if (!user || !user.passwordHash) return null;
-
-        // Dynamic import to avoid Edge Runtime issues
-        const { verifyPassword } = await import("@/lib/password");
-        const isValid = await verifyPassword(password, user.passwordHash);
-        if (!isValid) return null;
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-        };
-      },
-    }),
-  ],
+  providers,
   callbacks: {
     async jwt({ token, user, account }) {
       if (user && user.id) {
