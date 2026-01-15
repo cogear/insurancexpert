@@ -3,6 +3,36 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 
 async function main() {
+  console.log("Seeding database...");
+
+  // Create dev organization and user for development
+  console.log("Creating dev organization and user...");
+
+  const devOrg = await prisma.organization.upsert({
+    where: { id: "dev-org-id" },
+    update: {},
+    create: {
+      id: "dev-org-id",
+      name: "Dev Organization",
+      slug: "dev-org",
+      subscriptionTier: "enterprise",
+    },
+  });
+  console.log(`  Created/updated org: ${devOrg.name}`);
+
+  const devUser = await prisma.user.upsert({
+    where: { id: "dev-user-id" },
+    update: {},
+    create: {
+      id: "dev-user-id",
+      email: "dev@insurancexpert.local",
+      name: "Dev User",
+      organizationId: devOrg.id,
+      role: "owner",
+    },
+  });
+  console.log(`  Created/updated user: ${devUser.email}`);
+
   console.log("Seeding subscription plans...");
 
   // Create subscription plans

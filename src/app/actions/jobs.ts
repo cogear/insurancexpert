@@ -1,6 +1,6 @@
 "use server";
 
-import { auth } from "@/auth";
+import { getOrganizationId } from "@/lib/get-session";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { generateJobNumber } from "@/lib/utils";
@@ -24,17 +24,13 @@ const createJobSchema = z.object({
  * Create a new job
  */
 export async function createJob(data: z.infer<typeof createJobSchema>) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
-
+  const organizationId = await getOrganizationId();
   const validated = createJobSchema.parse(data);
   const jobNumber = generateJobNumber();
 
   const job = await prisma.job.create({
     data: {
-      organizationId: session.user.organizationId,
+      organizationId,
       jobNumber,
       status: "draft",
       customerName: validated.customerName,
@@ -63,16 +59,13 @@ export async function updateJob(
   jobId: string,
   data: Partial<z.infer<typeof createJobSchema>>
 ) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   // Verify job belongs to organization
   const existingJob = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -111,15 +104,12 @@ export async function updateJob(
  * Get a job by ID
  */
 export async function getJob(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
     include: {
       documents: {
@@ -156,13 +146,10 @@ export async function getJobs(options?: {
   limit?: number;
   offset?: number;
 }) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const where: Record<string, unknown> = {
-    organizationId: session.user.organizationId,
+    organizationId,
   };
 
   if (options?.status) {
@@ -200,10 +187,7 @@ export async function getJobs(options?: {
  * Update job status
  */
 export async function updateJobStatus(jobId: string, status: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const validStatuses = ["draft", "analyzing", "ready", "in_progress", "completed"];
   if (!validStatuses.includes(status)) {
@@ -213,7 +197,7 @@ export async function updateJobStatus(jobId: string, status: string) {
   const existingJob = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -236,15 +220,12 @@ export async function updateJobStatus(jobId: string, status: string) {
  * Delete a job
  */
 export async function deleteJob(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const existingJob = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -265,29 +246,26 @@ export async function deleteJob(jobId: string) {
  * Get job statistics for dashboard
  */
 export async function getJobStats() {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const [total, draft, analyzing, ready, inProgress, completed] = await Promise.all([
     prisma.job.count({
-      where: { organizationId: session.user.organizationId },
+      where: { organizationId },
     }),
     prisma.job.count({
-      where: { organizationId: session.user.organizationId, status: "draft" },
+      where: { organizationId, status: "draft" },
     }),
     prisma.job.count({
-      where: { organizationId: session.user.organizationId, status: "analyzing" },
+      where: { organizationId, status: "analyzing" },
     }),
     prisma.job.count({
-      where: { organizationId: session.user.organizationId, status: "ready" },
+      where: { organizationId, status: "ready" },
     }),
     prisma.job.count({
-      where: { organizationId: session.user.organizationId, status: "in_progress" },
+      where: { organizationId, status: "in_progress" },
     }),
     prisma.job.count({
-      where: { organizationId: session.user.organizationId, status: "completed" },
+      where: { organizationId, status: "completed" },
     }),
   ]);
 
@@ -298,7 +276,7 @@ export async function getJobStats() {
 
   const monthlyJobs = await prisma.job.findMany({
     where: {
-      organizationId: session.user.organizationId,
+      organizationId,
       createdAt: { gte: startOfMonth },
     },
     select: { totalRCV: true, estimatedProfit: true },
@@ -332,16 +310,13 @@ export async function getJobStats() {
  * Get line items for a job
  */
 export async function getJobLineItems(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   // Verify job belongs to organization
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 

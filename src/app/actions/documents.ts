@@ -1,6 +1,6 @@
 "use server";
 
-import { auth } from "@/auth";
+import { getOrganizationId } from "@/lib/get-session";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { uploadToS3, generateDocumentKey, getSignedDownloadUrl } from "@/lib/s3/client";
@@ -10,10 +10,7 @@ import { documentProcessor } from "@/lib/agentcore/pipeline/document-processor";
  * Upload a document for processing
  */
 export async function uploadDocument(formData: FormData) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const file = formData.get("file") as File;
   const jobId = formData.get("jobId") as string;
@@ -27,7 +24,7 @@ export async function uploadDocument(formData: FormData) {
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -41,7 +38,7 @@ export async function uploadDocument(formData: FormData) {
 
   // Generate S3 key and upload
   const s3Key = generateDocumentKey(
-    session.user.organizationId,
+    organizationId,
     jobId,
     documentType,
     file.name
@@ -52,7 +49,7 @@ export async function uploadDocument(formData: FormData) {
   // Create document record
   const document = await prisma.document.create({
     data: {
-      organizationId: session.user.organizationId,
+      organizationId,
       jobId,
       name: file.name,
       type: documentType,
@@ -87,15 +84,12 @@ async function processDocumentAsync(documentId: string) {
  * Get document by ID
  */
 export async function getDocument(documentId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const document = await prisma.document.findFirst({
     where: {
       id: documentId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
     include: {
       job: true,
@@ -113,15 +107,12 @@ export async function getDocument(documentId: string) {
  * Get documents for a job
  */
 export async function getJobDocuments(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   return prisma.document.findMany({
     where: {
       jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
     orderBy: { createdAt: "desc" },
   });
@@ -131,15 +122,12 @@ export async function getJobDocuments(jobId: string) {
  * Get signed download URL for a document
  */
 export async function getDocumentDownloadUrl(documentId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const document = await prisma.document.findFirst({
     where: {
       id: documentId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -154,15 +142,12 @@ export async function getDocumentDownloadUrl(documentId: string) {
  * Delete a document
  */
 export async function deleteDocument(documentId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const document = await prisma.document.findFirst({
     where: {
       id: documentId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -183,15 +168,12 @@ export async function deleteDocument(documentId: string) {
  * Reprocess a document
  */
 export async function reprocessDocument(documentId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const document = await prisma.document.findFirst({
     where: {
       id: documentId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -221,16 +203,13 @@ export async function reprocessDocument(documentId: string) {
  * Get insurance analysis for a job
  */
 export async function getInsuranceAnalysis(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   // Verify job belongs to organization
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -248,16 +227,13 @@ export async function getInsuranceAnalysis(jobId: string) {
  * Get aerial reports for a job
  */
 export async function getAerialReports(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   // Verify job belongs to organization
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 

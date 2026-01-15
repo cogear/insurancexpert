@@ -1,6 +1,6 @@
 "use server";
 
-import { auth } from "@/auth";
+import { getOrganizationId } from "@/lib/get-session";
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { PricingCalculator } from "@/lib/pricing/calculator";
@@ -20,16 +20,13 @@ export async function generateEstimate(
     overhead?: number;
   }
 ) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   // Get job with line items
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
     include: {
       lineItems: true,
@@ -47,7 +44,7 @@ export async function generateEstimate(
   // Get supplier configurations
   const supplierConfigs = await prisma.supplierConfiguration.findMany({
     where: {
-      organizationId: session.user.organizationId,
+      organizationId,
       isEnabled: true,
     },
   });
@@ -55,7 +52,7 @@ export async function generateEstimate(
   // Calculate pricing
   const pricingResult = await pricingCalculator.calculateEstimate(
     job.lineItems,
-    session.user.organizationId,
+    organizationId,
     {
       preferredSupplier: options?.preferredSupplier,
       laborMarkup: options?.laborMarkup ?? 0.35, // 35% default
@@ -106,16 +103,13 @@ export async function generateEstimate(
  * Get estimates for a job
  */
 export async function getJobEstimates(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   // Verify job belongs to organization
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
   });
 
@@ -133,10 +127,7 @@ export async function getJobEstimates(jobId: string) {
  * Get a single estimate
  */
 export async function getEstimate(estimateId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const estimate = await prisma.estimate.findFirst({
     where: { id: estimateId },
@@ -156,7 +147,7 @@ export async function getEstimate(estimateId: string) {
     },
   });
 
-  if (!estimate || estimate.job.organizationId !== session.user.organizationId) {
+  if (!estimate || estimate.job.organizationId !== organizationId) {
     throw new Error("Estimate not found");
   }
 
@@ -170,17 +161,14 @@ export async function updateEstimateStatus(
   estimateId: string,
   status: "draft" | "sent" | "accepted" | "declined"
 ) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const estimate = await prisma.estimate.findFirst({
     where: { id: estimateId },
     include: { job: { select: { organizationId: true } } },
   });
 
-  if (!estimate || estimate.job.organizationId !== session.user.organizationId) {
+  if (!estimate || estimate.job.organizationId !== organizationId) {
     throw new Error("Estimate not found");
   }
 
@@ -203,17 +191,14 @@ export async function updateEstimateStatus(
  * Delete an estimate
  */
 export async function deleteEstimate(estimateId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const estimate = await prisma.estimate.findFirst({
     where: { id: estimateId },
     include: { job: { select: { organizationId: true, id: true } } },
   });
 
-  if (!estimate || estimate.job.organizationId !== session.user.organizationId) {
+  if (!estimate || estimate.job.organizationId !== organizationId) {
     throw new Error("Estimate not found");
   }
 
@@ -230,15 +215,12 @@ export async function deleteEstimate(estimateId: string) {
  * Get profitability report for a job
  */
 export async function getProfitabilityReport(jobId: string) {
-  const session = await auth();
-  if (!session?.user?.organizationId) {
-    throw new Error("Unauthorized");
-  }
+  const organizationId = await getOrganizationId();
 
   const job = await prisma.job.findFirst({
     where: {
       id: jobId,
-      organizationId: session.user.organizationId,
+      organizationId,
     },
     include: {
       lineItems: true,
