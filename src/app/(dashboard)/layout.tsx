@@ -1,12 +1,10 @@
-import { auth } from "@/auth";
-import { redirect } from "next/navigation";
+import { getDevSession } from "@/lib/dev-session";
 import Link from "next/link";
 import {
-  Home,
+  Upload,
   FileText,
   Settings,
   LogOut,
-  Menu,
   Building2,
   BarChart3,
 } from "lucide-react";
@@ -16,11 +14,8 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
-
-  if (!session?.user) {
-    redirect("/login");
-  }
+  // DEV MODE: Use dev session instead of auth
+  const session = getDevSession();
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -32,8 +27,8 @@ export default async function DashboardLayout({
         </div>
 
         <nav className="flex flex-col gap-1 p-4">
-          <NavLink href="/dashboard" icon={<Home size={20} />}>
-            Dashboard
+          <NavLink href="/upload" icon={<Upload size={20} />}>
+            Upload Document
           </NavLink>
           <NavLink href="/jobs" icon={<FileText size={20} />}>
             Jobs
@@ -51,21 +46,10 @@ export default async function DashboardLayout({
             <div className="font-medium text-gray-900">{session.user.name}</div>
             <div className="text-xs">{session.user.organizationName}</div>
           </div>
-          <form
-            action={async () => {
-              "use server";
-              const { signOut } = await import("@/auth");
-              await signOut();
-            }}
-          >
-            <button
-              type="submit"
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 hover:bg-gray-100"
-            >
-              <LogOut size={18} />
-              Sign Out
-            </button>
-          </form>
+          <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400">
+            <LogOut size={18} />
+            <span>Auth Bypassed (Dev Mode)</span>
+          </div>
         </div>
       </aside>
 
