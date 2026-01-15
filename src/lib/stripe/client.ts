@@ -2,6 +2,7 @@
  * Stripe Integration
  *
  * Handles subscription management, billing, and webhooks.
+ * All functions gracefully handle when Stripe is not configured.
  */
 
 import Stripe from "stripe";
@@ -10,11 +11,8 @@ import { prisma } from "@/lib/prisma";
 // Lazy initialization to avoid build-time errors
 let _stripe: Stripe | null = null;
 
-export function getStripe(): Stripe {
-  if (!_stripe) {
-    if (!process.env.STRIPE_SECRET_KEY) {
-      throw new Error("STRIPE_SECRET_KEY is not configured");
-    }
+export function getStripe(): Stripe | null {
+  if (!_stripe && process.env.STRIPE_SECRET_KEY) {
     _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
       typescript: true,
     });
@@ -22,14 +20,9 @@ export function getStripe(): Stripe {
   return _stripe;
 }
 
-// For backwards compatibility - use getStripe() instead
-export const stripe = {
-  get customers() { return getStripe().customers; },
-  get subscriptions() { return getStripe().subscriptions; },
-  get checkout() { return getStripe().checkout; },
-  get billingPortal() { return getStripe().billingPortal; },
-  get webhooks() { return getStripe().webhooks; },
-};
+export function isStripeConfigured(): boolean {
+  return !!process.env.STRIPE_SECRET_KEY;
+}
 
 /**
  * Create a Stripe customer for an organization
@@ -38,7 +31,10 @@ export async function createStripeCustomer(
   organizationId: string,
   email: string,
   name: string
-): Promise<string> {
+): Promise<string | null> {
+  const stripe = getStripe();
+  if (!stripe) return null;
+
   const customer = await stripe.customers.create({
     email,
     name,
@@ -64,7 +60,10 @@ export async function createCheckoutSession(
   billingCycle: "monthly" | "annual",
   successUrl: string,
   cancelUrl: string
-): Promise<string> {
+): Promise<string | null> {
+  const stripe = getStripe();
+  if (!stripe) return null;
+
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
     include: { users: { where: { role: "owner" }, take: 1 } },
@@ -92,6 +91,8 @@ export async function createCheckoutSession(
       organization.name
     );
   }
+
+  if (!customerId) return null;
 
   // Get the appropriate price ID
   const priceId =
@@ -135,7 +136,10 @@ export async function createCheckoutSession(
 export async function createBillingPortalSession(
   organizationId: string,
   returnUrl: string
-): Promise<string> {
+): Promise<string | null> {
+  const stripe = getStripe();
+  if (!stripe) return null;
+
   const organization = await prisma.organization.findUnique({
     where: { id: organizationId },
   });
@@ -159,6 +163,9 @@ export async function cancelSubscription(
   organizationId: string,
   immediately: boolean = false
 ): Promise<void> {
+  const stripe = getStripe();
+  if (!stripe) return;
+
   const subscription = await prisma.subscription.findUnique({
     where: { organizationId },
   });
@@ -215,14 +222,12 @@ async function handleCheckoutComplete(
 ): Promise<void> {
   const organizationId = session.metadata?.organizationId;
   const planId = session.metadata?.planId;
-  const billingCycle = session.metadata?.billingCycle as "monthly" | "annual";
 
   if (!organizationId || !planId) {
     console.error("Missing metadata in checkout session");
     return;
   }
 
-  // Subscription will be created/updated via subscription.created webhook
   console.log(`Checkout completed for org ${organizationId}`);
 }
 
@@ -305,7 +310,9 @@ async function handleSubscriptionDeleted(
  * Handle successful payment
  */
 async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
-  // Reset monthly job counter on successful payment
+  const stripe = getStripe();
+  if (!stripe || !invoice.subscription) return;
+
   const subscription = await stripe.subscriptions.retrieve(
     invoice.subscription as string
   );
@@ -326,6 +333,9 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
  * Handle failed payment
  */
 async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
+  const stripe = getStripe();
+  if (!stripe || !invoice.subscription) return;
+
   const subscription = await stripe.subscriptions.retrieve(
     invoice.subscription as string
   );
@@ -373,8 +383,8 @@ export async function canCreateJob(organizationId: string): Promise<{
   });
 
   if (!subscription) {
-    // Default to starter limits
-    return { allowed: true, remaining: 10, limit: 10 };
+    // Default to starter limits (generous for development)
+    return { allowed: true, remaining: 100, limit: 100 };
   }
 
   const limit = subscription.plan.jobsPerMonth;
@@ -397,10 +407,16 @@ export async function canCreateJob(organizationId: string): Promise<{
  * Increment job usage count
  */
 export async function incrementJobUsage(organizationId: string): Promise<void> {
-  await prisma.subscription.update({
+  const subscription = await prisma.subscription.findUnique({
     where: { organizationId },
-    data: {
-      jobsUsedThisMonth: { increment: 1 },
-    },
   });
+
+  if (subscription) {
+    await prisma.subscription.update({
+      where: { organizationId },
+      data: {
+        jobsUsedThisMonth: { increment: 1 },
+      },
+    });
+  }
 }
