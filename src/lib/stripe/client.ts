@@ -7,9 +7,29 @@
 import Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  typescript: true,
-});
+// Lazy initialization to avoid build-time errors
+let _stripe: Stripe | null = null;
+
+export function getStripe(): Stripe {
+  if (!_stripe) {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new Error("STRIPE_SECRET_KEY is not configured");
+    }
+    _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+      typescript: true,
+    });
+  }
+  return _stripe;
+}
+
+// For backwards compatibility - use getStripe() instead
+export const stripe = {
+  get customers() { return getStripe().customers; },
+  get subscriptions() { return getStripe().subscriptions; },
+  get checkout() { return getStripe().checkout; },
+  get billingPortal() { return getStripe().billingPortal; },
+  get webhooks() { return getStripe().webhooks; },
+};
 
 /**
  * Create a Stripe customer for an organization
