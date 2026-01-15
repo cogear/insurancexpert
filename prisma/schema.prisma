@@ -1,0 +1,516 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+}
+
+// ============================================================================
+// MULTI-TENANCY & AUTH
+// ============================================================================
+
+model Organization {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  stripeCustomerId String?  @unique
+  subscriptionTier String   @default("starter") // starter, professional, enterprise
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  users               User[]
+  jobs                Job[]
+  documents           Document[]
+  agentSessions       AgentSession[]
+  supplierConfigs     SupplierConfiguration[]
+  subscription        Subscription?
+}
+
+model User {
+  id             String   @id @default(uuid())
+  organizationId String
+  email          String   @unique
+  name           String?
+  passwordHash   String?
+  role           String   @default("member") // owner, admin, member
+  cognitoId      String?  @unique
+  emailVerified  DateTime?
+  image          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agentSessions AgentSession[]
+  accounts      Account[]
+  sessions      Session[]
+}
+
+// NextAuth Models
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================================================
+// SUBSCRIPTIONS & BILLING
+// ============================================================================
+
+model SubscriptionPlan {
+  id           String   @id @default(uuid())
+  name         String   @unique // starter, professional, enterprise
+  displayName  String
+  monthlyPrice Decimal  @db.Decimal(10, 2)
+  annualPrice  Decimal  @db.Decimal(10, 2)
+  jobsPerMonth Int      // -1 for unlimited
+  maxUsers     Int      // -1 for unlimited
+  features     Json     // Feature flags as JSON
+  isActive     Boolean  @default(true)
+  stripePriceIdMonthly String?
+  stripePriceIdAnnual  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                 String   @id @default(uuid())
+  organizationId     String   @unique
+  planId             String
+  status             String   @default("active") // active, past_due, canceled, trialing
+  billingCycle       String   @default("monthly") // monthly, annual
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  stripeSubId        String?  @unique
+  jobsUsedThisMonth  Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         SubscriptionPlan @relation(fields: [planId], references: [id])
+}
+
+// ============================================================================
+// JOBS & DOCUMENTS
+// ============================================================================
+
+model Job {
+  id             String   @id @default(uuid())
+  organizationId String
+  jobNumber      String
+  status         String   @default("draft") // draft, analyzing, ready, in_progress, completed
+
+  // Customer Information
+  customerName  String
+  customerPhone String?
+  customerEmail String?
+
+  // Property Address
+  streetAddress String
+  city          String
+  state         String
+  zipCode       String
+  coordinates   Json?    // { lat: number, lng: number }
+
+  // Insurance Details
+  insuranceCompany String?
+  policyNumber     String?
+  claimNumber      String?
+  dateOfLoss       DateTime?
+  adjusterName     String?
+  adjusterPhone    String?
+  adjusterEmail    String?
+
+  // Calculated Financial Summary
+  totalRCV        Decimal? @db.Decimal(10, 2)
+  totalACV        Decimal? @db.Decimal(10, 2)
+  deductible      Decimal? @db.Decimal(10, 2)
+  estimatedProfit Decimal? @db.Decimal(10, 2)
+  profitMargin    Decimal? @db.Decimal(5, 2)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  documents         Document[]
+  insuranceAnalyses InsuranceAnalysis[]
+  aerialReports     AerialReport[]
+  lineItems         LineItem[]
+  estimates         Estimate[]
+  agentSessions     AgentSession[]
+
+  @@unique([organizationId, jobNumber])
+  @@index([organizationId])
+  @@index([status])
+}
+
+model Document {
+  id             String   @id @default(uuid())
+  organizationId String
+  jobId          String
+  type           String   // insurance_scope, aerial_report, supplement, photo, other
+  subType        String?  // eagleview, roofscope, hover, state_farm, allstate, etc.
+  name           String
+  s3Key          String
+  s3Bucket       String   @default("insurancexpert-documents")
+  mimeType       String?
+  fileSize       Int?
+
+  // Processing Status
+  processingStatus String   @default("pending") // pending, processing, completed, failed
+  processingError  String?  @db.Text
+
+  // OCR Results
+  ocrProvider   String?  // mistral, textract, gemini
+  ocrText       String?  @db.Text
+  ocrConfidence Float?
+
+  // Extracted Data
+  extractedData    Json?
+  validationErrors Json?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  processedAt DateTime?
+
+  // Relations
+  organization      Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job               Job                 @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  insuranceAnalyses InsuranceAnalysis[]
+  aerialReports     AerialReport[]
+
+  @@index([organizationId])
+  @@index([jobId])
+  @@index([processingStatus])
+}
+
+// ============================================================================
+// INSURANCE ANALYSIS
+// ============================================================================
+
+model InsuranceAnalysis {
+  id           String  @id @default(uuid())
+  jobId        String
+  documentId   String?
+  analysisType String  // full, supplement, re_analysis
+
+  // Parsed Header Information
+  headerData Json // { customerName, insuranceCompany, policyNumber, claimNumber, dateOfLoss, etc. }
+
+  // Roof Measurements
+  roofMeasurements Json // { totalArea, perimeter, ridge, hip, valley, etc. }
+
+  // CRITICAL: Pipe Jacks (detailed breakdown for accuracy)
+  pipeJacks Json // {
+  //   pf3n1: number,        // 3-in-1 universal
+  //   pf14: number,         // 1-4" standard
+  //   pf14_4: number,       // 4" specific
+  //   pf14_5: number,       // 5" specific
+  //   pf14_6: number,       // 6" specific
+  //   pf14_8: number,       // 8" specific
+  //   pfSplitBoot: number,  // Split boot
+  //   pfLead: number,       // Lead flashing
+  //   pfGooseNeckSmall: number,
+  //   pfGooseNeckLarge: number,
+  //   pfOther: { description: string, quantity: number }[]
+  // }
+
+  // CRITICAL: Ventilation (detailed breakdown for accuracy)
+  ventilation Json // {
+  //   vsTurtleVent: number,    // Box/turtle vents (EA)
+  //   vsRidgeVent: number,     // Ridge vent (LF)
+  //   vsIntakeVent: number,    // Intake/soffit vents
+  //   vsOffRidgeVent: number,  // Off-ridge vents
+  //   vsBroan4: number,        // 4" Broan
+  //   vsBroan6: number,        // 6" Broan
+  //   hvacVent: number,        // HVAC penetrations
+  //   vsOther: { description: string, quantity: number }[]
+  // }
+
+  // Other Materials
+  materials Json // { shingles, underlayment, dripEdge, starterStrip, hipRidge, etc. }
+
+  // Financial Summary
+  financialSummary Json // { totalRCV, totalACV, roofRCV, roofACV, gutterRCV, etc. }
+
+  // Confidence Scores (0-1 per section)
+  confidenceScores Json // { header: 0.95, pipeJacks: 0.87, ventilation: 0.92, materials: 0.88, financial: 0.96 }
+
+  // Agent Analysis Metadata
+  agentSessionId String?
+  modelUsed      String?
+  processingTime Int?     // milliseconds
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  job      Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id])
+
+  @@index([jobId])
+}
+
+// ============================================================================
+// AERIAL REPORTS
+// ============================================================================
+
+model AerialReport {
+  id         String  @id @default(uuid())
+  jobId      String
+  documentId String?
+  provider   String  // eagleview, roofscope, hover, other
+  reportId   String? // External report ID from provider
+
+  // Core Measurements
+  totalArea      Float? // Total roof area in sq ft
+  totalPerimeter Float? // Total perimeter in linear ft
+  ridgeLength    Float? // Total ridge length
+  hipLength      Float? // Total hip length
+  valleyLength   Float? // Total valley length
+  eaveLength     Float? // Total eave length
+  rakeLength     Float? // Total rake length
+  stepFlashing   Float? // Step flashing linear ft
+  headwall       Float? // Headwall flashing linear ft
+
+  // Slope Information
+  slopes Json // [{ pitch: "6:12", area: 1200, percentage: 45 }, ...]
+
+  // Building Structures
+  structures Json // { main: { area: 2000 }, garage: { area: 500 }, shed: { area: 200 } }
+
+  // Additional Details
+  facetCount     Int?
+  roofComplexity String? // simple, moderate, complex, very_complex
+  predominantPitch String?
+  wasteFactorSuggested Float?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  job      Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  document Document? @relation(fields: [documentId], references: [id])
+
+  @@index([jobId])
+}
+
+// ============================================================================
+// LINE ITEMS & ESTIMATES
+// ============================================================================
+
+model LineItem {
+  id          String  @id @default(uuid())
+  jobId       String
+  source      String  // insurance, aerial, manual
+  category    String  // roof, gutters, siding, windows, interior, other
+  subcategory String? // shingles, underlayment, pipe_jack, vent, drip_edge, etc.
+  description String
+  quantity    Decimal @db.Decimal(10, 2)
+  unit        String  // SQ, LF, EA, SF, etc.
+
+  // Insurance Values
+  rcv          Decimal? @db.Decimal(10, 2) // Replacement Cost Value
+  acv          Decimal? @db.Decimal(10, 2) // Actual Cash Value
+  depreciation Decimal? @db.Decimal(10, 2)
+
+  // Product Matching
+  matchedProductId String?
+  matchConfidence  Float?
+
+  // Our Cost Calculation
+  actualCost Decimal? @db.Decimal(10, 2)
+  markup     Decimal? @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  job            Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  matchedProduct ProductCatalog? @relation(fields: [matchedProductId], references: [id])
+
+  @@index([jobId])
+  @@index([category])
+}
+
+model Estimate {
+  id     String @id @default(uuid())
+  jobId  String
+  type   String // consumer, contractor, material_only
+  status String @default("draft") // draft, sent, accepted, declined
+
+  // Summary Totals
+  materialCost Decimal @db.Decimal(10, 2)
+  laborCost    Decimal @db.Decimal(10, 2)
+  overhead     Decimal @db.Decimal(10, 2)
+  profit       Decimal @db.Decimal(10, 2)
+  totalPrice   Decimal @db.Decimal(10, 2)
+
+  // Detailed Breakdown
+  lineItems Json // Array of estimate line items with pricing
+
+  // Pricing Source
+  supplierUsed String?  // beacon, srs, abc, gulf_eagle, lowest
+  priceDate    DateTime?
+
+  // PDF Generation
+  pdfS3Key String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  sentAt    DateTime?
+
+  // Relations
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+}
+
+// ============================================================================
+// AGENT SESSIONS
+// ============================================================================
+
+model AgentSession {
+  id                 String   @id @default(uuid())
+  organizationId     String
+  userId             String
+  agentCoreSessionId String   @unique // AWS AgentCore session ID
+  jobId              String?
+  agentType          String   @default("insurance-expert") // Agent type used
+  status             String   @default("active") // active, completed, failed
+  memorySnapshot     Json?    // Cached memory state
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  completedAt        DateTime?
+
+  // Relations
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job          Job?           @relation(fields: [jobId], references: [id])
+  messages     AgentMessage[]
+
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model AgentMessage {
+  id          String   @id @default(uuid())
+  sessionId   String
+  role        String   // user, assistant, tool, system
+  content     String   @db.Text
+  toolCalls   Json?    // Tool invocations made
+  toolResults Json?    // Tool response data
+  metadata    Json?    // Token usage, latency, model, etc.
+  createdAt   DateTime @default(now())
+
+  session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+// ============================================================================
+// PRODUCTS & PRICING
+// ============================================================================
+
+model ProductCatalog {
+  id          String  @id @default(uuid())
+  sku         String  @unique
+  name        String
+  description String?
+  category    String  // shingles, underlayment, pipe_jack, vent, drip_edge, starter, hip_ridge, etc.
+  subcategory String?
+
+  // Manufacturer
+  manufacturer    String?
+  manufacturerSku String?
+
+  // Beacon Supplier
+  beaconSku     String?
+  beaconPrice   Decimal?  @db.Decimal(10, 2)
+  beaconUpdated DateTime?
+
+  // SRS Supplier
+  srsSku     String?
+  srsPrice   Decimal?  @db.Decimal(10, 2)
+  srsUpdated DateTime?
+
+  // ABC Supplier
+  abcSku     String?
+  abcPrice   Decimal?  @db.Decimal(10, 2)
+  abcUpdated DateTime?
+
+  // Gulf Eagle Supplier
+  gulfEagleSku     String?
+  gulfEaglePrice   Decimal?  @db.Decimal(10, 2)
+  gulfEagleUpdated DateTime?
+
+  // Unit Information
+  unitOfMeasure   String // bundle, roll, each, linear_foot, etc.
+  coveragePerUnit Float? // sq ft per unit (e.g., 33.3 for shingle bundle)
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  lineItems LineItem[]
+
+  @@index([category])
+  @@index([isActive])
+}
+
+model SupplierConfiguration {
+  id             String  @id @default(uuid())
+  organizationId String
+  supplier       String  // beacon, srs, abc, gulf_eagle
+  isEnabled      Boolean @default(true)
+  accountNumber  String?
+  contactName    String?
+  contactEmail   String?
+  contactPhone   String?
+  apiCredentials Json?   // Encrypted API keys if available
+  defaultMarkup  Decimal? @db.Decimal(5, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, supplier])
+}
