@@ -5,36 +5,11 @@ import Cognito from "next-auth/providers/cognito";
 import Google from "next-auth/providers/google";
 import { prisma } from "@/lib/prisma";
 import { z } from "zod";
-import crypto from "crypto";
 
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
 });
-
-// Password hashing using PBKDF2
-async function hashPassword(password: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const salt = crypto.randomBytes(16).toString("hex");
-    crypto.pbkdf2(password, salt, 100000, 64, "sha512", (err, derivedKey) => {
-      if (err) reject(err);
-      resolve(`${salt}:${derivedKey.toString("hex")}`);
-    });
-  });
-}
-
-async function verifyPassword(
-  password: string,
-  hashedPassword: string
-): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const [salt, hash] = hashedPassword.split(":");
-    crypto.pbkdf2(password, salt, 100000, 64, "sha512", (err, derivedKey) => {
-      if (err) reject(err);
-      resolve(derivedKey.toString("hex") === hash);
-    });
-  });
-}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   adapter: PrismaAdapter(prisma),
@@ -78,6 +53,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!user || !user.passwordHash) return null;
 
+        // Dynamic import to avoid Edge Runtime issues
+        const { verifyPassword } = await import("@/lib/password");
         const isValid = await verifyPassword(password, user.passwordHash);
         if (!isValid) return null;
 
@@ -178,5 +155,3 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
 });
-
-export { hashPassword, verifyPassword };
